@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin - Santa Licenses</title>
+  <style>
+    body { font-family: sans-serif; background: #111; color: #eee; margin: 0; padding: 1rem; }
+    h2 { margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { padding: 0.6rem 1rem; border: 1px solid #333; text-align: left; font-size: 0.9rem; }
+    th { background: #222; }
+    tr:hover { background: #1a1a1a; }
+    .btn { padding: 0.3rem 0.8rem; border: none; border-radius: 4px; cursor: pointer; }
+    .btn-red { background: #e63946; color: white; }
+    a { color: #e63946; text-decoration: none; }
+    .top { display: flex; justify-content: space-between; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <h2>🎅 Licenças Santa</h2>
+    <a href="/logout">Sair</a>
+  </div>
+
+  <form method="POST" action="/create_license" style="margin-bottom:1.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+    <input style="padding:0.5rem; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px;" type="text" name="key" placeholder="Chave (deixe vazio para gerar)">
+    <input style="padding:0.5rem; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px;" type="number" name="days" placeholder="Dias (0=permanente)" value="0">
+    <input style="padding:0.5rem; background:#2a2a2a; border:1px solid #444; color:#eee; border-radius:4px;" type="text" name="note" placeholder="Anotação">
+    <button class="btn" style="background:#2a9d8f; color:white;" type="submit">+ Criar Licença</button>
+  </form>
+
+  <table>
+    <tr>
+      <th>Chave</th><th>HWID</th><th>Expira</th><th>Criada</th><th>Nota</th><th>Ação</th>
+    </tr>
+    {% for lic in licenses %}
+    <tr>
+      <td>{{ lic.key }}</td>
+      <td>{{ lic.hwid or '—' }}</td>
+      <td>{{ lic.expires.strftime('%d/%m/%Y') if lic.expires else 'Permanente' }}</td>
+      <td>{{ lic.created.strftime('%d/%m/%Y') }}</td>
+      <td>{{ lic.note or '—' }}</td>
+      <td>
+        <form method="POST" action="/delete_license/{{ lic.id }}" onsubmit="return confirm('Deletar?')">
+          <button class="btn btn-red" type="submit">Deletar</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>
