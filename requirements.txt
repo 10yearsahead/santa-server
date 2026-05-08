@@ -1,7 +1,0 @@
-flask
-flask-sqlalchemy
-gunicorn
-mercadopago
-PyGithub
-python-dotenv
-psycopg2-binary
