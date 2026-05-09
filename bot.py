@@ -23,6 +23,9 @@ GITHUB_REPO     = os.environ["GITHUB_REPO"]
 GITHUB_FILE_PATH = os.environ["GITHUB_FILE_PATH"]
 PORT = int(os.environ.get("PORT", "9000"))
 
+# Intervalo em minutos para rodar a limpeza automática
+CLEANUP_INTERVAL_MINUTES = int(os.environ.get("CLEANUP_INTERVAL_MINUTES", "30"))
+
 BRASILIA_TZ = timezone(timedelta(hours=-3))
 
 def now_br() -> str:
@@ -56,6 +59,95 @@ async def run_sync(fn, *args):
     return await loop.run_in_executor(None, partial(fn, *args))
 
 
+# ── Limpeza automática de licenças expiradas ─────────────────────────────────
+
+def _is_license_expired(fields: list[str]) -> bool:
+    """
+    Replica exatamente a lógica do C#:
+    - Se LicenseStartedAt for null → licença ainda não iniciada, não remove.
+    - Se LicenseDurationDays <= 0 → licença permanente, não remove.
+    - Caso contrário: expirada se UtcNow >= started + duration_days.
+    """
+    try:
+        # fields: [discord_id, sid, is_active, products, duration_days, started, created_at]
+        if len(fields) < 6:
+            return False
+
+        started_str = fields[5].strip()
+        if not started_str or started_str == "null":
+            return False  # Nunca iniciada, não expira
+
+        duration_str = fields[4].strip()
+        if not duration_str.lstrip("-").isdigit():
+            return False
+        duration_days = int(duration_str)
+        if duration_days <= 0:
+            return False  # Permanente
+
+        started = datetime.fromisoformat(started_str)
+        expires_at = started + timedelta(days=duration_days)
+        return datetime.now(timezone.utc) >= expires_at.astimezone(timezone.utc)
+
+    except Exception as e:
+        log.warning(f"[CLEANUP] Erro ao verificar expiração: {e}")
+        return False
+
+
+def _do_cleanup() -> tuple[int, list[str]]:
+    """Lê o arquivo, remove expirados e salva. Retorna (qtd_removida, ids_removidos)."""
+    lines, sha = _read_lines()
+
+    header_lines = []
+    data_lines   = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("FORMAT:") or stripped.startswith("PRODUCTS:"):
+            header_lines.append(line)
+        else:
+            data_lines.append(line)
+
+    removed_ids: list[str] = []
+    kept_lines:  list[str] = []
+
+    for line in data_lines:
+        fields = line.split(":")
+        if _is_license_expired(fields):
+            removed_ids.append(fields[0])
+            log.info(f"[CLEANUP] Licença expirada removida: {fields[0]}")
+        else:
+            kept_lines.append(line)
+
+    if removed_ids:
+        final_lines = header_lines + kept_lines
+        _write_lines(
+            final_lines,
+            sha,
+            f"[bot] auto-cleanup: removed {len(removed_ids)} expired license(s)"
+        )
+
+    return len(removed_ids), removed_ids
+
+
+async def cleanup_loop():
+    """Task que roda em background e limpa licenças expiradas periodicamente."""
+    await bot.wait_until_ready()
+    log.info(f"[CLEANUP] Task iniciada — intervalo: {CLEANUP_INTERVAL_MINUTES}min")
+    while not bot.is_closed():
+        try:
+            log.info("[CLEANUP] Verificando licenças expiradas...")
+            count, ids = await run_sync(_do_cleanup)
+            if count:
+                log.info(f"[CLEANUP] {count} licença(s) removida(s): {ids}")
+            else:
+                log.info("[CLEANUP] Nenhuma licença expirada encontrada.")
+        except GithubException as e:
+            log.error(f"[CLEANUP] Erro GitHub: {e}")
+        except Exception as e:
+            log.error(f"[CLEANUP] Erro inesperado: {e}")
+
+        await asyncio.sleep(CLEANUP_INTERVAL_MINUTES * 60)
+
+
 # ── Discord bot ──────────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -66,6 +158,9 @@ async def setup_hook():
     log.info("Syncing slash commands...")
     await bot.tree.sync()
     log.info("Slash commands synced.")
+    # Inicia a task de limpeza automática
+    bot.loop.create_task(cleanup_loop())
+    log.info("[CLEANUP] Task agendada.")
 
 @bot.event
 async def on_ready():
