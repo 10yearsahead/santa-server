@@ -49,7 +49,7 @@ def _write_lines(lines: list[str], sha: str, msg: str) -> None:
 
 def _find_user(lines: list[str], discord_id: str) -> tuple[int, list[str]] | tuple[None, None]:
     for i, line in enumerate(lines):
-        fields = line.split(":", 6) 
+        fields = line.split(":")
         if fields and fields[0] == discord_id:
             return i, fields
     return None, None
@@ -110,7 +110,7 @@ def _do_cleanup() -> tuple[int, list[str]]:
     kept_lines:  list[str] = []
 
     for line in data_lines:
-        fields = line.split(":", 6)
+        fields = line.split(":")
         if _is_license_expired(fields):
             removed_ids.append(fields[0])
             log.info(f"[CLEANUP] Licença expirada removida: {fields[0]}")
