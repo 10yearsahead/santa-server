@@ -23,13 +23,10 @@ GITHUB_REPO     = os.environ["GITHUB_REPO"]
 GITHUB_FILE_PATH = os.environ["GITHUB_FILE_PATH"]
 PORT = int(os.environ.get("PORT", "9000"))
 
-# Intervalo em minutos para rodar a limpeza automática
 CLEANUP_INTERVAL_MINUTES = int(os.environ.get("CLEANUP_INTERVAL_MINUTES", "30"))
 
-BRASILIA_TZ = timezone(timedelta(hours=-3))
-
-def now_br() -> str:
-    return datetime.now(BRASILIA_TZ).strftime("%Y-%m-%dT%H:%M:%S-03:00")
+def now_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 gh = Github(auth=GithubAuth.Token(GITHUB_TOKEN))
 
@@ -61,9 +58,21 @@ async def run_sync(fn, *args):
 
 # ── Limpeza automática de licenças expiradas ─────────────────────────────────
 
+def _parse_dt(s: str) -> datetime:
+    """
+    Parseia uma string de data/hora para datetime UTC com timezone.
+    Suporta: ISO 8601 com Z, com +00:00, com -03:00, e naive (legado sem tz).
+    """
+    s = s.strip().replace("Z", "+00:00")
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        # Dado legado sem timezone: assume UTC
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _is_license_expired(fields: list[str]) -> bool:
     """
-    Replica exatamente a lógica do C#:
     - Se LicenseStartedAt for null → licença ainda não iniciada, não remove.
     - Se LicenseDurationDays <= 0 → licença permanente, não remove.
     - Caso contrário: expirada se UtcNow >= started + duration_days.
@@ -75,18 +84,18 @@ def _is_license_expired(fields: list[str]) -> bool:
 
         started_str = fields[5].strip()
         if not started_str or started_str == "null":
-            return False  # Nunca iniciada, não expira
+            return False
 
         duration_str = fields[4].strip()
         if not duration_str.lstrip("-").isdigit():
             return False
         duration_days = int(duration_str)
         if duration_days <= 0:
-            return False  # Permanente
+            return False
 
-        started = datetime.fromisoformat(started_str)
-        expires_at = started + timedelta(days=duration_days)
-        return datetime.now(timezone.utc) >= expires_at.astimezone(timezone.utc)
+        started_utc = _parse_dt(started_str)
+        expires_at = started_utc + timedelta(days=duration_days)
+        return datetime.now(timezone.utc) >= expires_at
 
     except Exception as e:
         log.warning(f"[CLEANUP] Erro ao verificar expiração: {e}")
@@ -158,7 +167,6 @@ async def setup_hook():
     log.info("Syncing slash commands...")
     await bot.tree.sync()
     log.info("Slash commands synced.")
-    # Inicia a task de limpeza automática
     bot.loop.create_task(cleanup_loop())
     log.info("[CLEANUP] Task agendada.")
 
@@ -182,7 +190,7 @@ async def cmd_create(interaction: discord.Interaction, discord_id: str, duration
         idx, _ = _find_user(lines, discord_id)
         if idx is not None:
             return None, "Usuário já possui uma licença."
-        new_line = f"{discord_id}:null:true:{products}:{duration}:null:{now_br()}"
+        new_line = f"{discord_id}:null:true:{products}:{duration}:null:{now_utc()}"
         lines.append(new_line)
         _write_lines(lines, sha, f"[bot] create license for {discord_id}")
         return new_line, None
@@ -280,7 +288,7 @@ async def handle_bind(request: web.Request) -> web.Response:
             changed = True
             log.info(f"[API] Binding SID for {discord_id}")
         if fields[5] == "null":
-            fields[5] = now_br()
+            fields[5] = now_utc()
             changed = True
             log.info(f"[API] Setting LICENSE_STARTED for {discord_id}")
         if changed:
